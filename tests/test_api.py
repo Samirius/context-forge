@@ -48,20 +48,20 @@ class TestHealthEndpoint:
 
 class TestPlaybookEndpoints:
     def test_list_playbooks(self, client):
-        resp = client.get("/v1/playbook")
+        resp = client.get("/playbook")
         assert resp.status_code == 200
         data = resp.json()
         assert "playbooks" in data
         assert len(data["playbooks"]) >= 1
 
     def test_get_playbook(self, client):
-        resp = client.get(f"/v1/playbook/{client._playbook_id}")
+        resp = client.get(f"/playbook/{client._playbook_id}")
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "test-api"
 
     def test_get_stats(self, client):
-        resp = client.get(f"/v1/playbook/{client._playbook_id}/stats")
+        resp = client.get(f"/playbook/{client._playbook_id}/stats")
         assert resp.status_code == 200
         data = resp.json()
         assert data["active_bullets"] == 2
@@ -69,7 +69,7 @@ class TestPlaybookEndpoints:
 
 class TestRetrieveEndpoint:
     def test_retrieve(self, client):
-        resp = client.post("/v1/retrieve", json={
+        resp = client.post("/retrieve", json={
             "playbook_id": client._playbook_id,
             "query": "API failures",
             "top_k": 5,
@@ -81,7 +81,7 @@ class TestRetrieveEndpoint:
 
 class TestFeedbackEndpoint:
     def test_add_insight(self, client):
-        resp = client.post("/v1/feedback", json={
+        resp = client.post("/feedback", json={
             "playbook_id": client._playbook_id,
             "new_insights": [{"section": "technical", "content": "New insight"}],
         })
@@ -95,7 +95,7 @@ class TestFeedbackEndpoint:
         bullets = resp.json().get("bullets", [])
 
         if bullets:
-            resp = client.post("/v1/feedback", json={
+            resp = client.post("/feedback", json={
                 "playbook_id": client._playbook_id,
                 "helpful_bullet_ids": [bullets[0]["id"]],
             })

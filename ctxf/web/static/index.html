@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>context-forge</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+</head>
+<body>
+<div class="app" id="app">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="logo">
+      <span class="icon">⚡</span>
+      <div>context-forge<small>Agentic Context Engineering</small></div>
+    </div>
+    <div class="nav">
+      <div class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')">
+        📊 Dashboard
+      </div>
+      <div class="nav-item" data-page="playbook" onclick="showPage('playbook')">
+        📖 Playbook
+        <span class="badge" id="bullet-count-badge">0</span>
+      </div>
+      <div class="nav-item" data-page="search" onclick="showPage('search')">
+        🔍 Search
+      </div>
+      <div class="nav-item" data-page="evolve" onclick="showPage('evolve')">
+        🔄 Evolve
+      </div>
+      <div class="nav-item" data-page="history" onclick="showPage('history')">
+        📜 History
+      </div>
+      <div class="nav-item" data-page="export" onclick="showPage('export')">
+        📤 Export
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <div class="stat"><span>Playbook</span><span id="sidebar-name">—</span></div>
+      <div class="stat"><span>Version</span><span id="sidebar-version">—</span></div>
+      <div class="stat"><span>Bullets</span><span id="sidebar-bullets">—</span></div>
+      <div class="stat"><span>Connection</span><span class="conn-status connected" id="conn-status"></span></div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main">
+    <!-- Header -->
+    <div class="header">
+      <h1 id="page-title">Dashboard</h1>
+      <div class="header-actions" id="header-actions"></div>
+    </div>
+
+    <div class="content" id="page-content">
+      <!-- Pages rendered here -->
+    </div>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal" style="display:none" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<script>
+// --- State ---
+let state = {
+  playbook: null,
+  bullets: [],
+  stats: null,
+  ws: null,
+  currentPage: 'dashboard',
+  history: [],
+};
+
+const API = '';
+const PB_ID = new URLSearchParams(location.search).get('pb') || null;
+
+// --- API ---
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json', ...opts.headers },
+    ...opts,
+  });
+  if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+// --- WebSocket ---
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  state.ws = new WebSocket(`${proto}://${location.host}/ws`);
+  state.ws.onopen = () => {
+    document.getElementById('conn-status').className = 'conn-status connected';
+  };
+  state.ws.onclose = () => {
+    document.getElementById('conn-status').className = 'conn-status disconnected';
+    setTimeout(connectWS, 3000);
+  };
+  state.ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'playbook_updated') {
+      loadPlaybook();
+    }
+  };
+}
+
+// --- Data ---
+async function loadPlaybook() {
+  try {
+    const data = await api('/playbook');
+    const pbs = data.playbooks || [];
+    if (pbs.length === 0) {
+      renderEmptyState();
+      return;
+    }
+    const pb = PB_ID ? pbs.find(p => p.id === PB_ID) : pbs[0];
+    if (!pb) return;
+
+    const full = await api(`/playbook/${pb.id}`);
+    state.playbook = full;
+    state.bullets = full.bullets || [];
+
+    const stats = await api(`/playbook/${pb.id}/stats`);
+    state.stats = stats;
+
+    updateSidebar();
+    renderCurrentPage();
+  } catch (e) {
+    console.error('Failed to load playbook:', e);
+  }
+}
+
+function updateSidebar() {
+  const s = state.stats;
+  if (!s) return;
+  document.getElementById('sidebar-name').textContent = s.name;
+  document.getElementById('sidebar-version').textContent = 'v' + s.version;
+  document.getElementById('sidebar-bullets').textContent = s.active_bullets;
+  document.getElementById('bullet-count-badge').textContent = s.active_bullets;
+}
+
+// --- Pages ---
+function showPage(page) {
+  state.currentPage = page;
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
+  renderCurrentPage();
+}
+
+function renderCurrentPage() {
+  const titles = { dashboard: 'Dashboard', playbook: 'Playbook', search: 'Search', evolve: 'Evolve', history: 'History', export: 'Export' };
+  document.getElementById('page-title').textContent = titles[state.currentPage] || 'Dashboard';
+  const c = document.getElementById('page-content');
+  const h = document.getElementById('header-actions');
+  h.innerHTML = '';
+
+  switch (state.currentPage) {
+    case 'dashboard': renderDashboard(c, h); break;
+    case 'playbook': renderPlaybook(c, h); break;
+    case 'search': renderSearch(c, h); break;
+    case 'evolve': renderEvolve(c, h); break;
+    case 'history': renderHistory(c, h); break;
+    case 'export': renderExport(c, h); break;
+    default: renderDashboard(c, h);
+  }
+}
+
+function renderEmptyState() {
+  document.getElementById('page-content').innerHTML = `
+    <div class="empty-state">
+      <div class="icon">⚡</div>
+      <h3>No Playbook Found</h3>
+      <p>Create a playbook to get started with Agentic Context Engineering.</p>
+      <button class="btn btn-primary" onclick="createPlaybook()">Create Playbook</button>
+    </div>`;
+}
+
+// --- Dashboard ---
+function renderDashboard(c, h) {
+  const s = state.stats;
+  if (!s) { c.innerHTML = '<p>Loading...</p>'; return; }
+
+  h.innerHTML = `<button class="btn btn-primary" onclick="showAddModal()">+ Add Bullet</button>`;
+
+  c.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="label">Active Bullets</div><div class="value green">${s.active_bullets}</div></div>
+      <div class="stat-card"><div class="label">Version</div><div class="value blue">${s.version}</div></div>
+      <div class="stat-card"><div class="label">Helpful</div><div class="value green">${s.total_helpful}</div></div>
+      <div class="stat-card"><div class="label">Harmful</div><div class="value yellow">${s.total_harmful}</div></div>
+      <div class="stat-card"><div class="label">Sections</div><div class="value blue">${Object.keys(s.by_section).length}</div></div>
+      <div class="stat-card"><div class="label">Deprecated</div><div class="value">${s.deprecated_bullets}</div></div>
+    </div>
+
+    <h2 style="margin-bottom:16px;font-size:16px;">Quick Search</h2>
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="dash-search" placeholder="Search playbook..." onkeydown="if(event.key==='Enter')dashSearch()">
+    </div>
+    <div id="dash-results"></div>
+
+    <h2 style="margin:24px 0 16px;font-size:16px;">Sections Overview</h2>
+    <div id="sections-overview"></div>
+  `;
+
+  // Render section overview
+  const overview = document.getElementById('sections-overview');
+  const bySection = {};
+  state.bullets.filter(b => !b.deprecated).forEach(b => {
+    bySection[b.section] = (bySection[b.section] || 0) + 1;
+  });
+  overview.innerHTML = Object.entries(bySection).sort().map(([sec, count]) => `
+    <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="showPage('playbook');filterSection='${sec}';renderCurrentPage()">
+      <span style="text-transform:capitalize">${sec}</span>
+      <span style="color:var(--accent)">${count} bullets</span>
+    </div>
+  `).join('');
+}
+
+async function dashSearch() {
+  const q = document.getElementById('dash-search').value;
+  if (!q) return;
+  const r = await api(`/retrieve`, {
+    method: 'POST',
+    body: JSON.stringify({ playbook_id: state.playbook.id, query: q, top_k: 5 }),
+  });
+  document.getElementById('dash-results').innerHTML = r.results.map(res => `
+    <div class="search-result">
+      <div>
+        <span class="bullet-id">${res.id}</span>
+        <span style="color:var(--text-dim);font-size:12px;margin-left:8px">${res.section}</span>
+        <div style="margin-top:6px">${res.content}</div>
+      </div>
+      <div class="score">${res.score.toFixed(3)}</div>
+    </div>
+  `).join('') || '<p style="color:var(--text-dim)">No results</p>';
+}
+
+// --- Playbook ---
+let filterSection = null;
+
+function renderPlaybook(c, h) {
+  const bullets = state.bullets.filter(b => !b.deprecated);
+  const sections = [...new Set(bullets.map(b => b.section))].sort();
+  const filtered = filterSection ? bullets.filter(b => b.section === filterSection) : bullets;
+
+  h.innerHTML = `
+    <select class="btn" onchange="filterSection=this.value||null;renderCurrentPage()">
+      <option value="">All Sections</option>
+      ${sections.map(s => `<option value="${s}" ${filterSection===s?'selected':''}>${s}</option>`).join('')}
+    </select>
+    <button class="btn btn-primary" onclick="showAddModal()">+ Add Bullet</button>
+  `;
+
+  const bySection = {};
+  filtered.forEach(b => { bySection[b.section] = bySection[b.section] || []; bySection[b.section].push(b); });
+
+  c.innerHTML = Object.entries(bySection).sort().map(([sec, bs]) => `
+    <div class="section-group">
+      <div class="section-header">
+        ${sec.toUpperCase()} <span class="count">${bs.length}</span>
+      </div>
+      ${bs.map(b => `
+        <div class="bullet-card" id="bullet-${b.id}">
+          <div class="bullet-id">${b.id}</div>
+          <div style="flex:1">
+            <div class="bullet-content">${b.content}</div>
+            <div class="bullet-meta">
+              <span class="vote vote-helpful">👍 ${b.helpful}</span>
+              <span class="vote vote-harmful">👎 ${b.harmful}</span>
+            </div>
+          </div>
+          <div class="bullet-actions">
+            <button class="btn btn-sm" onclick="voteBullet('${b.id}','helpful')" title="Helpful">👍</button>
+            <button class="btn btn-sm" onclick="voteBullet('${b.id}','harmful')" title="Harmful">👎</button>
+            <button class="btn btn-sm btn-danger" onclick="deprecateBullet('${b.id}')" title="Remove">✕</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('') || '<div class="empty-state"><h3>No bullets</h3><p>Add your first bullet to get started.</p></div>';
+}
+
+async function voteBullet(id, field) {
+  await api('/feedback', {
+    method: 'POST',
+    body: JSON.stringify({
+      playbook_id: state.playbook.id,
+      [field === 'helpful' ? 'helpful_bullet_ids' : 'harmful_bullet_ids']: [id],
+    }),
+  });
+  loadPlaybook();
+}
+
+async function deprecateBullet(id) {
+  if (!confirm('Deprecate this bullet?')) return;
+  await api('/feedback', {
+    method: 'POST',
+    body: JSON.stringify({ playbook_id: state.playbook.id, deprecate_ids: [id] }),
+  });
+  loadPlaybook();
+}
+
+// --- Search ---
+function renderSearch(c, h) {
+  c.innerHTML = `
+    <div class="search-box" style="margin-bottom:24px">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="search-input" placeholder="Search your playbook for relevant context..." 
+        onkeydown="if(event.key==='Enter')doSearch()" autofocus>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <button class="btn btn-primary" onclick="doSearch()">Search</button>
+      <span style="color:var(--text-dim);font-size:13px">Top K:</span>
+      <input type="number" id="search-topk" value="10" min="1" max="50" style="width:60px;padding:6px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text)">
+    </div>
+    <div id="search-results"></div>
+  `;
+}
+
+async function doSearch() {
+  const q = document.getElementById('search-input').value;
+  const topk = parseInt(document.getElementById('search-topk').value) || 10;
+  if (!q) return;
+
+  document.getElementById('search-results').innerHTML = '<p style="color:var(--text-dim)">Searching...</p>';
+
+  const r = await api('/v1/retrieve', {
+    method: 'POST',
+    body: JSON.stringify({ playbook_id: state.playbook.id, query: q, top_k: topk }),
+  });
+
+  document.getElementById('search-results').innerHTML = r.results.map((res, i) => `
+    <div class="search-result" style="display:flex;align-items:center;gap:16px">
+      <div style="font-size:20px;color:var(--text-dim);min-width:30px">#${i+1}</div>
+      <div style="flex:1">
+        <span class="bullet-id">${res.id}</span>
+        <span style="color:var(--text-dim);font-size:12px;margin-left:8px;text-transform:capitalize">${res.section}</span>
+        <div style="margin-top:6px;font-size:15px">${res.content}</div>
+        <div style="margin-top:4px;font-size:12px;color:var(--text-dim)">👍 ${res.helpful} &nbsp; 👎 ${res.harmful}</div>
+      </div>
+      <div>
+        <div class="score" style="font-size:18px">${res.score.toFixed(3)}</div>
+        <div style="font-size:11px;color:var(--text-dim)">relevance</div>
+      </div>
+    </div>
+  `).join('') || '<p style="color:var(--text-dim)">No results found.</p>';
+}
+
+// --- Evolve ---
+function renderEvolve(c, h) {
+  c.innerHTML = `
+    <div style="max-width:600px">
+      <p style="color:var(--text-dim);margin-bottom:20px">
+        Run the ACE loop: submit a task with outcome feedback, and the system will reflect, curate insights, 
+        and evolve your playbook automatically.
+      </p>
+      <div class="form-group">
+        <label>Task</label>
+        <textarea id="evolve-task" placeholder="Describe the task that was executed..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Response (optional)</label>
+        <textarea id="evolve-response" placeholder="The AI agent's response..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Outcome Feedback (optional)</label>
+        <input type="text" id="evolve-outcome" placeholder="e.g., success, partial, failed - tests passed">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-primary" onclick="runEvolve()">🚀 Run Evolve</button>
+        <button class="btn" onclick="runReflect()">Reflect Only</button>
+      </div>
+      <div id="evolve-result" style="margin-top:20px"></div>
+    </div>
+  `;
+}
+
+async function runEvolve() {
+  const task = document.getElementById('evolve-task').value;
+  if (!task) return alert('Task is required');
+  const resultDiv = document.getElementById('evolve-result');
+  resultDiv.innerHTML = '<p style="color:var(--accent)">⏳ Running full ACE loop...</p>';
+
+  try {
+    const r = await api('/evolve', {
+      method: 'POST',
+      body: JSON.stringify({
+        playbook_id: state.playbook.id,
+        task,
+        response: document.getElementById('evolve-response').value,
+        outcome: document.getElementById('evolve-outcome').value,
+      }),
+    });
+    resultDiv.innerHTML = `
+      <div style="background:var(--surface2);border-radius:var(--radius);padding:16px;margin-bottom:12px">
+        <strong>Response:</strong><br><pre style="white-space:pre-wrap;margin-top:8px">${r.response || 'N/A'}</pre>
+      </div>
+      <div style="background:var(--surface2);border-radius:var(--radius);padding:16px;margin-bottom:12px">
+        <strong>Deltas: ${r.deltas?.length || 0}</strong> | <strong>Applied: ${r.applied ? '✅' : '❌'}</strong>
+      </div>
+      <button class="btn" onclick="loadPlaybook();showPage('playbook')">View Updated Playbook →</button>
+    `;
+  } catch (e) {
+    resultDiv.innerHTML = `<div style="color:var(--danger)">Error: ${e.message}</div>`;
+  }
+}
+
+async function runReflect() {
+  const task = document.getElementById('evolve-task').value;
+  if (!task) return alert('Task is required');
+  const resultDiv = document.getElementById('evolve-result');
+  resultDiv.innerHTML = '<p style="color:var(--accent)">⏳ Reflecting...</p>';
+
+  try {
+    const r = await api('/evolve', {
+      method: 'POST',
+      body: JSON.stringify({
+        playbook_id: state.playbook.id,
+        task,
+        response: document.getElementById('evolve-response').value,
+        outcome: document.getElementById('evolve-outcome').value,
+      }),
+    });
+    resultDiv.innerHTML = `<pre style="background:var(--surface2);padding:16px;border-radius:var(--radius);white-space:pre-wrap;overflow-x:auto">${JSON.stringify(r, null, 2)}</pre>`;
+  } catch (e) {
+    resultDiv.innerHTML = `<div style="color:var(--danger)">Error: ${e.message}</div>`;
+  }
+}
+
+// --- History ---
+function renderHistory(c, h) {
+  const bullets = state.bullets.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+  c.innerHTML = bullets.length ? bullets.map(b => `
+    <div class="bullet-card ${b.deprecated ? 'deprecated' : ''}">
+      <div class="bullet-id">${b.id}</div>
+      <div style="flex:1">
+        <div class="bullet-content">${b.content}</div>
+        <div class="bullet-meta">
+          <span style="font-size:11px;color:var(--text-dim)">${b.section} · updated ${b.updated_at || 'unknown'}</span>
+          <span class="vote vote-helpful">👍 ${b.helpful}</span>
+          <span class="vote vote-harmful">👎 ${b.harmful}</span>
+          ${b.deprecated ? '<span style="color:var(--danger);font-size:12px">DEPRECATED</span>' : ''}
+        </div>
+      </div>
+    </div>
+  `).join('') : '<div class="empty-state"><h3>No history</h3></div>';
+}
+
+// --- Export ---
+function renderExport(c, h) {
+  c.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:20px">
+      <button class="btn" onclick="loadExport('text')">Text</button>
+      <button class="btn" onclick="loadExport('json')">JSON</button>
+      <button class="btn" onclick="loadExport('markdown')">Markdown</button>
+      <button class="btn btn-primary" onclick="copyExport()">📋 Copy</button>
+      <button class="btn" onclick="downloadExport()">⬇ Download</button>
+    </div>
+    <pre id="export-content" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;white-space:pre-wrap;max-height:600px;overflow-y:auto;font-size:13px"></pre>
+  `;
+  loadExport('text');
+}
+
+let currentExport = '';
+let currentExportExt = 'txt';
+
+async function loadExport(fmt) {
+  currentExportExt = fmt === 'json' ? 'json' : fmt === 'markdown' ? 'md' : 'txt';
+  const bullets = state.bullets.filter(b => !b.deprecated);
+  const pb = state.playbook;
+
+  if (fmt === 'json') {
+    currentExport = JSON.stringify({ playbook_id: pb.id, name: pb.name, version: pb.version, sections: pb.sections, bullets }, null, 2);
+  } else {
+    const bySec = {};
+    bullets.forEach(b => { bySec[b.section] = bySec[b.section] || []; bySec[b.section].push(b); });
+    if (fmt === 'markdown') {
+      currentExport = `# Playbook: ${pb.name}\nVersion: ${pb.version}\n\n` +
+        Object.entries(bySec).sort().map(([s, bs]) =>
+          `## ${s.replace(/_/g,' ').toUpperCase()}\n` +
+          bs.map(b => `- [${b.id}] helpful=${b.helpful} harmful=${b.harmful} :: ${b.content}`).join('\n') + '\n'
+        ).join('\n');
+    } else {
+      currentExport = `# Playbook: ${pb.name} (v${pb.version})\n\n` +
+        Object.entries(bySec).sort().map(([s, bs]) =>
+          `## ${s.replace(/_/g,' ').toUpperCase()}\n` +
+          bs.map(b => `[${b.id}] helpful=${b.helpful} harmful=${b.harmful} :: ${b.content}`).join('\n') + '\n'
+        ).join('\n');
+    }
+  }
+  document.getElementById('export-content').textContent = currentExport;
+}
+
+function copyExport() {
+  navigator.clipboard.writeText(currentExport);
+  alert('Copied to clipboard!');
+}
+
+function downloadExport() {
+  const blob = new Blob([currentExport], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `playbook-${state.playbook.name}.${currentExportExt}`;
+  a.click();
+}
+
+// --- Modal ---
+function showAddModal() {
+  const sections = state.playbook?.sections || ['governance', 'technical', 'style', 'domain', 'workflow'];
+  document.getElementById('modal-content').innerHTML = `
+    <h2>Add Bullet</h2>
+    <div class="form-group">
+      <label>Section</label>
+      <select id="add-section">
+        ${sections.map(s => `<option value="${s}">${s}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Content</label>
+      <textarea id="add-content" placeholder="Enter the insight, strategy, or rule..."></textarea>
+    </div>
+    <div class="form-group">
+      <label>Reason (optional)</label>
+      <input type="text" id="add-reason" placeholder="Why add this?">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="addBullet()">Add</button>
+    </div>
+  `;
+  document.getElementById('modal').style.display = 'flex';
+}
+
+async function addBullet() {
+  const section = document.getElementById('add-section').value;
+  const content = document.getElementById('add-content').value;
+  if (!content) return alert('Content required');
+
+  await api('/feedback', {
+    method: 'POST',
+    body: JSON.stringify({
+      playbook_id: state.playbook.id,
+      new_insights: [{ section, content }],
+      reason: document.getElementById('add-reason').value || 'Added via web UI',
+    }),
+  });
+  closeModal();
+  loadPlaybook();
+}
+
+function closeModal() {
+  document.getElementById('modal').style.display = 'none';
+}
+
+async function createPlaybook() {
+  await api('/playbook', { method: 'POST', body: JSON.stringify({ name: 'my-playbook' }) });
+  loadPlaybook();
+}
+
+// --- Init ---
+document.addEventListener('DOMContentLoaded', () => {
+  connectWS();
+  loadPlaybook();
+});
+
+// Keyboard shortcut
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && !['INPUT','TEXTAREA'].includes(e.target.tagName)) {
+    e.preventDefault();
+    showPage('search');
+    setTimeout(() => document.getElementById('search-input')?.focus(), 100);
+  }
+  if (e.key === 'Escape') closeModal();
+});
+</script>
+</body>
+</html>
