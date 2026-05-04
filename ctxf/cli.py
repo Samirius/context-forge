@@ -403,3 +403,111 @@ def stats(playbook_id, db_path):
 
 if __name__ == "__main__":
     cli()
+
+
+# --- add (direct bullet add without LLM) ---
+
+@cli.command("add")
+@click.option("--section", "-s", required=True, help="Section to add bullet to")
+@click.option("--content", "-c", required=True, help="Bullet content")
+@click.option("--playbook-id", default=None, help="Playbook ID")
+@click.option("--db", "db_path", default=None, help="Database path")
+def add_bullet(section: str, content: str, playbook_id: Optional[str], db_path: Optional[str]):
+    """Add a bullet directly to a playbook section (no LLM needed)."""
+    from ctxf.store.sqlite_store import SqliteStore
+    from ctxf.models.delta import Delta
+
+    settings = get_settings()
+    store = SqliteStore(db_path or settings.db_path)
+
+    try:
+        pb = store.get_playbook(playbook_id)
+        if not pb:
+            click.echo("No playbook found. Run 'ctxf init' first.", err=True)
+            sys.exit(1)
+
+        delta = Delta.add(section, content, reason="Manual add via CLI")
+        results = store.apply_deltas(pb.id, [delta])
+        click.echo(f"Added bullet to section '{section}' in playbook '{pb.name}'")
+    finally:
+        store.close()
+
+
+# --- seed (populate playbook with example bullets) ---
+
+@cli.command("seed")
+@click.option("--playbook-id", default=None, help="Playbook ID")
+@click.option("--db", "db_path", default=None, help="Database path")
+@click.option("--domain", default="general", help="Domain for seed data (general, web, ml, devops)")
+def seed(playbook_id: Optional[str], db_path: Optional[str], domain: str):
+    """Seed a playbook with example bullets."""
+    from ctxf.store.sqlite_store import SqliteStore
+    from ctxf.models.delta import Delta
+
+    SEED_DATA = {
+        "general": [
+            ("governance", "Always validate inputs before processing"),
+            ("governance", "Log all significant operations for audit trail"),
+            ("technical", "Use exponential backoff for retry logic on external calls"),
+            ("technical", "Handle edge cases explicitly rather than assuming happy path"),
+            ("technical", "Cache frequently accessed data with appropriate TTL"),
+            ("style", "Write clear, self-documenting function and variable names"),
+            ("style", "Use structured responses with consistent error codes"),
+            ("domain", "Test with realistic data, not just synthetic examples"),
+            ("domain", "Document assumptions and dependencies explicitly"),
+            ("workflow", "Break complex tasks into smaller, verifiable steps"),
+        ],
+        "web": [
+            ("technical", "Sanitize all user inputs to prevent XSS attacks"),
+            ("technical", "Use parameterized queries to prevent SQL injection"),
+            ("technical", "Implement rate limiting on public-facing APIs"),
+            ("technical", "Use HTTPS everywhere, redirect HTTP to HTTPS"),
+            ("governance", "Set appropriate CORS headers for API endpoints"),
+            ("domain", "Validate JWT tokens on every authenticated request"),
+            ("domain", "Use Content-Security-Policy headers to prevent injection"),
+            ("style", "Return consistent JSON error responses from APIs"),
+            ("workflow", "Write integration tests for all API endpoints"),
+            ("workflow", "Use environment variables for configuration, not hardcoding"),
+        ],
+        "ml": [
+            ("technical", "Always split data into train/val/test before any analysis"),
+            ("technical", "Log all hyperparameters and random seeds for reproducibility"),
+            ("technical", "Use cross-validation rather than a single train/test split"),
+            ("technical", "Check for data leakage between train and test sets"),
+            ("governance", "Version your datasets and models together"),
+            ("domain", "Monitor for data drift in production models"),
+            ("domain", "Start with a simple baseline before trying complex models"),
+            ("style", "Document model architecture decisions and trade-offs"),
+            ("workflow", "Automate evaluation metrics tracking across experiments"),
+            ("workflow", "Use MLflow or similar for experiment tracking"),
+        ],
+        "devops": [
+            ("technical", "Use infrastructure-as-code, never manual configuration"),
+            ("technical", "Implement health checks for all services"),
+            ("technical", "Set up proper log aggregation and alerting"),
+            ("technical", "Use container orchestration for production deployments"),
+            ("governance", "Rotate secrets and credentials regularly"),
+            ("governance", "Implement least-privilege access control"),
+            ("domain", "Monitor resource usage and set appropriate limits"),
+            ("style", "Write deployment runbooks for critical services"),
+            ("workflow", "Automate rollback procedures for failed deployments"),
+            ("workflow", "Use blue-green or canary deployments for zero-downtime"),
+        ],
+    }
+
+    bullets = SEED_DATA.get(domain, SEED_DATA["general"])
+
+    settings = get_settings()
+    store = SqliteStore(db_path or settings.db_path)
+
+    try:
+        pb = store.get_playbook(playbook_id)
+        if not pb:
+            click.echo("No playbook found. Run 'ctxf init' first.", err=True)
+            sys.exit(1)
+
+        deltas = [Delta.add(section, content, reason=f"Seed ({domain})") for section, content in bullets]
+        results = store.apply_deltas(pb.id, deltas)
+        click.echo(f"Seeded {len(deltas)} bullets ({domain}) into playbook '{pb.name}'")
+    finally:
+        store.close()
