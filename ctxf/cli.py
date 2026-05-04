@@ -511,3 +511,110 @@ def seed(playbook_id: Optional[str], db_path: Optional[str], domain: str):
         click.echo(f"Seeded {len(deltas)} bullets ({domain}) into playbook '{pb.name}'")
     finally:
         store.close()
+
+
+# --- list (show all bullets) ---
+
+@cli.command("list")
+@click.option("--playbook-id", default=None, help="Playbook ID")
+@click.option("--section", "-s", default=None, help="Filter by section")
+@click.option("--show-deprecated/--hide-deprecated", default=False, help="Show deprecated bullets")
+@click.option("--db", "db_path", default=None, help="Database path")
+def list_bullets(playbook_id: Optional[str], section: Optional[str], show_deprecated: bool, db_path: Optional[str]):
+    """List all bullets in the playbook."""
+    from ctxf.store.sqlite_store import SqliteStore
+
+    settings = get_settings()
+    store = SqliteStore(db_path or settings.db_path)
+
+    try:
+        pb = store.get_playbook(playbook_id)
+        if not pb:
+            click.echo("No playbook found. Run 'ctxf init' first.", err=True)
+            sys.exit(1)
+
+        bullets = pb.active_bullets()
+        if show_deprecated:
+            bullets = pb.bullets
+
+        if section:
+            bullets = [b for b in bullets if b.section == section]
+
+        if not bullets:
+            click.echo("No bullets found.")
+            return
+
+        # Group by section
+        by_section: dict[str, list] = {}
+        for b in bullets:
+            by_section.setdefault(b.section, []).append(b)
+
+        for sec, sec_bullets in sorted(by_section.items()):
+            click.echo(f"\n## {sec.upper()}")
+            for b in sec_bullets:
+                status = " [DEPRECATED]" if b.deprecated else ""
+                click.echo(f"  [{b.id}] helpful={b.helpful} harmful={b.harmful}{status} :: {b.content}")
+    finally:
+        store.close()
+
+
+# --- export (output playbook in paper format) ---
+
+@cli.command("export")
+@click.option("--playbook-id", default=None, help="Playbook ID")
+@click.option("--format", "fmt", default="text", type=click.Choice(["text", "json", "markdown"]), help="Output format")
+@click.option("--output", "-o", default=None, help="Output file (default: stdout)")
+@click.option("--db", "db_path", default=None, help="Database path")
+def export_playbook(playbook_id: Optional[str], fmt: str, output: Optional[str], db_path: Optional[str]):
+    """Export playbook in various formats."""
+    from ctxf.store.sqlite_store import SqliteStore
+
+    settings = get_settings()
+    store = SqliteStore(db_path or settings.db_path)
+
+    try:
+        pb = store.get_playbook(playbook_id)
+        if not pb:
+            click.echo("No playbook found. Run 'ctxf init' first.", err=True)
+            sys.exit(1)
+
+        bullets = pb.active_bullets()
+
+        if fmt == "json":
+            result = json.dumps({
+                "playbook_id": pb.id,
+                "name": pb.name,
+                "version": pb.version,
+                "sections": pb.sections,
+                "bullets": [b.to_dict() for b in bullets],
+            }, indent=2)
+        elif fmt == "markdown":
+            lines = [f"# Playbook: {pb.name}", f"Version: {pb.version}", ""]
+            by_section: dict[str, list] = {}
+            for b in bullets:
+                by_section.setdefault(b.section, []).append(b)
+            for sec, sec_bullets in sorted(by_section.items()):
+                lines.append(f"## {sec.replace('_', ' ').title()}")
+                for b in sec_bullets:
+                    lines.append(f"- [{b.id}] helpful={b.helpful} harmful={b.harmful} :: {b.content}")
+                lines.append("")
+            result = "\n".join(lines)
+        else:  # text (paper format)
+            lines = [f"# Playbook: {pb.name} (v{pb.version})", ""]
+            by_section: dict[str, list] = {}
+            for b in bullets:
+                by_section.setdefault(b.section, []).append(b)
+            for sec, sec_bullets in sorted(by_section.items()):
+                lines.append(f"## {sec.replace('_', ' ').title()}")
+                for b in sec_bullets:
+                    lines.append(f"[{b.id}] helpful={b.helpful} harmful={b.harmful} :: {b.content}")
+                lines.append("")
+            result = "\n".join(lines)
+
+        if output:
+            Path(output).write_text(result)
+            click.echo(f"Exported to {output}")
+        else:
+            click.echo(result)
+    finally:
+        store.close()
