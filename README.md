@@ -31,43 +31,97 @@ Instead of rewriting prompts from scratch (which causes *context collapse*), ACE
 ### Install
 
 ```bash
+# With pip
 pip install ctxf
-# or with uv:
+
+# With uv (recommended)
 uv pip install ctxf
+
+# From source
+git clone https://github.com/Samirius/context-forge.git
+cd context-forge
+uv venv .venv && source .venv/bin/activate
+uv pip install -e .
 ```
 
-### Set up
+### 5-Minute Demo (no LLM needed)
 
 ```bash
-# Initialize a playbook
-ctxf init --task my-project
+# 1. Create a playbook
+ctxf init --name my-project
 
-# Set your LLM provider
-export CTXF_LLM_BASE_URL="https://api.openai.com/v1"
-export CTXF_LLM_API_KEY="sk-..."
-export CTXF_LLM_MODEL="gpt-4o"
+# 2. Seed it with domain-specific knowledge
+ctxf seed --domain web
+# Options: general, web, ml, devops
+
+# 3. View all bullets
+ctxf list
+
+# 4. Search for relevant context
+ctxf retrieve "how to handle API errors"
+
+# 5. Add your own bullet
+ctxf add --section technical --content "Always use connection pooling for databases"
+
+# 6. Give feedback (mark bullets as helpful/harmful)
+curl -X POST http://localhost:8000/v1/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"new_insights": [{"section": "style", "content": "Prefer async/await over callbacks"}]}'
+
+# 7. Export playbook
+ctxf export --format markdown
+ctxf export --format json --output playbook.json
+
+# 8. View stats
+ctxf stats
 ```
 
-### Use the CLI
+### Quick Start with Server
+
+```bash
+# One command demo
+./demo.sh
+
+# Or manually:
+ctxf init --name my-project && ctxf seed --domain general
+ctxf serve --host 0.0.0.0 --port 8000
+```
+
+### Set up LLM for the ACE Loop
 
 ```bash
 # Search playbook for relevant context
 ctxf retrieve "how to handle database errors"
 
-# Analyze a task outcome and extract insights
+# Analyze a task outcome and extract insights (requires LLM)
 ctxf reflect --doc task_result.json
 
-# Convert insights into playbook updates
+# Convert insights into playbook updates (requires LLM)
 ctxf curate --reflection reflection.json
 
 # Apply updates to the playbook
 ctxf commit --delta delta.json
 
-# Or run the full loop in one command
+# Or run the full loop in one command (requires LLM)
 ctxf evolve --doc task_result.json
 
 # View playbook statistics
 ctxf stats
+
+# List all bullets
+ctxf list
+ctxf list --section technical
+
+# Export playbook
+ctxf export --format markdown
+ctxf export --format json --output playbook.json
+ctxf export --format text
+
+# Seed with example data
+ctxf seed --domain web
+
+# Add bullet directly
+ctxf add --section technical --content "Always validate input"
 ```
 
 ### Start the API Server
