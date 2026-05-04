@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  context-forge:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - CTXF_LLM_BASE_URL=${CTXF_LLM_BASE_URL:-https://api.openai.com/v1}
+      - CTXF_LLM_API_KEY=${CTXF_LLM_API_KEY}
+      - CTXF_LLM_MODEL=${CTXF_LLM_MODEL:-gpt-4o}
+    volumes:
+      - ctxf-data:/data
+    restart: unless-stopped
+
+  # Optional: local LLM with Ollama
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+
+volumes:
+  ctxf-data:
+  # ollama-data:
