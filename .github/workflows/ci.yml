@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main-hermes]
+  pull_request:
+    branches: [main-hermes]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check syntax
+        run: |
+          python -c "
+          import ast, os
+          for root, dirs, files in os.walk('ctxf'):
+              for f in files:
+                  if f.endswith('.py'):
+                      with open(os.path.join(root, f)) as fh:
+                          ast.parse(fh.read())
+          print('All files parse OK')
+          "
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Install dependencies
+        run: uv pip install --system -e .
+      - name: Run tests
+        run: python -m pytest tests/ -v
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t context-forge .
